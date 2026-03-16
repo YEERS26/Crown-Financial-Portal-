@@ -306,7 +306,93 @@ function priBadge(p)    { if(p==='Urgent') return `<span class="badge burgent">U
 
 
 // ── DASHBOARD ────────────────────────────────────────────────────
-let _activeCatFilter = null;
+let _activeCatFilter  = null;
+let _activeDateFilter = 'month'; // 'week','nextweek','month','nextmonth','custom'
+let _customFrom = '';
+let _customTo   = '';
+
+// Returns {from, to, label} date strings for a given filter key
+function dateRange(key, customFrom, customTo) {
+  const now = new Date(); now.setHours(0,0,0,0);
+  const toStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  if (key === 'week') {
+    // Mon–Sun of current week
+    const day = (now.getDay()+6)%7; // 0=Mon
+    const mon = new Date(now); mon.setDate(now.getDate()-day);
+    const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+    return { from:toStr(mon), to:toStr(sun), label:'This week ('+mon.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' – '+sun.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})+')' };
+  }
+  if (key === 'nextweek') {
+    const day = (now.getDay()+6)%7;
+    const mon = new Date(now); mon.setDate(now.getDate()-day+7);
+    const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+    return { from:toStr(mon), to:toStr(sun), label:'Next week ('+mon.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' – '+sun.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})+')' };
+  }
+  if (key === 'month') {
+    const first = new Date(now.getFullYear(),now.getMonth(),1);
+    const last  = new Date(now.getFullYear(),now.getMonth()+1,0);
+    return { from:toStr(first), to:toStr(last), label:'This month ('+now.toLocaleString('en-GB',{month:'long',year:'numeric'})+')' };
+  }
+  if (key === 'nextmonth') {
+    const first = new Date(now.getFullYear(),now.getMonth()+1,1);
+    const last  = new Date(now.getFullYear(),now.getMonth()+2,0);
+    return { from:toStr(first), to:toStr(last), label:'Next month ('+first.toLocaleString('en-GB',{month:'long',year:'numeric'})+')' };
+  }
+  if (key === 'custom') {
+    if (!customFrom || !customTo) return { from:'', to:'', label:'Custom range' };
+    const f = new Date(customFrom); const t = new Date(customTo);
+    return { from:customFrom, to:customTo, label:f.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})+' – '+t.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) };
+  }
+  return { from:'', to:'', label:'' };
+}
+
+function instsInRange(from, to) {
+  return insts.filter(i => i.date >= from && i.date <= to).sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+function setDateFilter(key) {
+  _activeDateFilter = key;
+  _activeCatFilter  = null;
+  if (key !== 'custom') applyDateFilter();
+}
+
+function applyDateFilter() {
+  const range = dateRange(_activeDateFilter, _customFrom, _customTo);
+  if (!range.from) return;
+  const filtered = instsInRange(range.from, range.to);
+  const sum = filtered.reduce((s,i)=>s+i.amount,0);
+  const topay = filtered.filter(i=>i.status!=='Paid').reduce((s,i)=>s+i.amount,0);
+
+  // Update filter buttons active state
+  document.querySelectorAll('.df-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === _activeDateFilter);
+  });
+
+  // Update summary pills
+  const sumEl = document.getElementById('filterSummary');
+  if (sumEl) sumEl.innerHTML = `
+    <span style="font-size:13px;color:var(--inkl)">${range.label}</span>
+    <span style="margin-left:auto;display:flex;gap:16px;font-size:13px">
+      <span><strong style="color:var(--r)">${fmt(sum)}</strong> total</span>
+      <span><strong style="color:var(--a)">${fmt(topay)}</strong> to pay</span>
+      <span><strong style="color:var(--g)">${fmt(sum-topay)}</strong> paid</span>
+    </span>`;
+
+  // Update breakdown title and table
+  const title = document.getElementById('breakdownTitle');
+  if (title) title.textContent = range.label;
+  _renderBreakdown(filtered);
+}
+
+function applyCustomRange() {
+  const f = document.getElementById('customFrom').value;
+  const t = document.getElementById('customTo').value;
+  if (!f || !t) return;
+  _customFrom = f; _customTo = t;
+  applyDateFilter();
+}
+
 
 function renderDash() {
   const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
@@ -373,6 +459,27 @@ function renderDash() {
         <span class="ctitle" id="breakdownTitle">All payments \u2014 ${now.toLocaleString('en-GB',{month:'long',year:'numeric'})}</span>
         <span style="font-size:12px;color:var(--inkl)" id="breakdownCount">${mi.length} payments \u00b7 ${fmt(monthTotal)}</span>
       </div>
+      <div style="padding:12px 16px;border-bottom:1px solid var(--bdrlt);display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="df-btn btnsm active" data-filter="month" onclick="setDateFilter('month')" style="font-size:12px">This month</button>
+        <button class="df-btn btnsm" data-filter="week" onclick="setDateFilter('week')" style="font-size:12px">This week</button>
+        <button class="df-btn btnsm" data-filter="nextweek" onclick="setDateFilter('nextweek')" style="font-size:12px">Next week</button>
+        <button class="df-btn btnsm" data-filter="nextmonth" onclick="setDateFilter('nextmonth')" style="font-size:12px">Next month</button>
+        <button class="df-btn btnsm" data-filter="custom" onclick="setDateFilter('custom');document.getElementById('customRangeRow').style.display='flex'" style="font-size:12px">Custom</button>
+        <div id="customRangeRow" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+          <input type="date" id="customFrom" style="font-size:12px;padding:4px 8px;border:1px solid #d8ccb0;border-radius:4px"/>
+          <span style="font-size:12px;color:var(--inkl)">to</span>
+          <input type="date" id="customTo" style="font-size:12px;padding:4px 8px;border:1px solid #d8ccb0;border-radius:4px"/>
+          <button class="btnprimary" onclick="applyCustomRange()" style="font-size:12px;padding:4px 10px">Apply</button>
+        </div>
+      </div>
+      <div id="filterSummary" style="padding:10px 16px;border-bottom:1px solid var(--bdrlt);background:var(--parch);display:flex;align-items:center;gap:8px;font-size:13px;flex-wrap:wrap">
+        <span style="font-size:13px;color:var(--inkl)">${now.toLocaleString('en-GB',{month:'long',year:'numeric'})}</span>
+        <span style="margin-left:auto;display:flex;gap:16px;font-size:13px">
+          <span><strong style="color:var(--r)">${fmt(monthTotal)}</strong> total</span>
+          <span><strong style="color:var(--a)">${fmt(monthToPay)}</strong> to pay</span>
+          <span><strong style="color:var(--g)">${fmt(monthPaid)}</strong> paid</span>
+        </span>
+      </div>
       <div style="overflow-x:auto">
         <table id="breakdownTable">
           <thead><tr><th>Date</th><th>Payment</th><th>Category</th><th>Frequency</th><th style="text-align:right">Amount</th><th>Status</th></tr></thead>
@@ -415,11 +522,7 @@ function _renderBreakdown(filtered) {
 function clearCatFilter() {
   _activeCatFilter=null;
   const bar=document.getElementById('catFilterBar'); if(bar) bar.style.display='none';
-  const title=document.getElementById('breakdownTitle');
-  if(title) title.textContent='All payments \u2014 '+new Date().toLocaleString('en-GB',{month:'long',year:'numeric'});
-  const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
-  const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;}).sort((a,b)=>a.date.localeCompare(b.date));
-  _renderBreakdown(mi);
+  applyDateFilter();
 }
 
 function initCharts() {
@@ -444,8 +547,9 @@ function initCharts() {
         const title=document.getElementById('breakdownTitle');
         if(bar){bar.style.display='flex';}
         if(lbl) lbl.textContent='Showing: '+cat;
-        if(title) title.textContent=cat+' \u2014 '+now.toLocaleString('en-GB',{month:'long',year:'numeric'});
-        const filtered=mi.filter(i=>{const def=defById(i.defId);return def&&def.cat===cat;}).sort((a,b)=>a.date.localeCompare(b.date));
+        if(title) title.textContent=cat+' \u2014 '+dateRange(_activeDateFilter,_customFrom,_customTo).label;
+        const range=dateRange(_activeDateFilter,_customFrom,_customTo);
+        const filtered=instsInRange(range.from,range.to).filter(i=>{const def=defById(i.defId);return def&&def.cat===cat;});
         _renderBreakdown(filtered);
         const bt=document.getElementById('breakdownTable');
         if(bt) bt.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
@@ -466,8 +570,9 @@ function initCharts() {
         if(!els.length) return;
         const isPaid=els[0].index===0;
         const title=document.getElementById('breakdownTitle');
-        if(title) title.textContent=(isPaid?'Paid':'Still to pay')+' \u2014 '+now.toLocaleString('en-GB',{month:'long',year:'numeric'});
-        const filtered=mi.filter(i=>isPaid?i.status==='Paid':i.status!=='Paid').sort((a,b)=>a.date.localeCompare(b.date));
+        const range=dateRange(_activeDateFilter,_customFrom,_customTo);
+        if(title) title.textContent=(isPaid?'Paid':'Still to pay')+' \u2014 '+range.label;
+        const filtered=instsInRange(range.from,range.to).filter(i=>isPaid?i.status==='Paid':i.status!=='Paid');
         _renderBreakdown(filtered);
         const bt=document.getElementById('breakdownTable');
         if(bt) bt.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
