@@ -36,14 +36,14 @@ export async function onRequest(context) {
 
     if (path === 'definitions' && request.method === 'POST') {
       const b = await request.json();
-      const rows = await sql`INSERT INTO payment_definitions (name,category,freq,weekday,day_of_month,next_date,amount,credit_bal,credit_max,priority) VALUES (${b.name},${b.category},${b.freq},${b.weekday||null},${b.day_of_month||null},${b.next_date||null},${b.amount},${b.credit_bal??null},${b.credit_max??null},${b.priority||''}) RETURNING *`;
+      const rows = await sql`INSERT INTO payment_definitions (name,category,freq,weekday,day_of_month,next_date,amount,credit_bal,credit_max,priority,start_date,end_date) VALUES (${b.name},${b.category},${b.freq},${b.weekday||null},${b.day_of_month||null},${b.next_date||null},${b.amount},${b.credit_bal??null},${b.credit_max??null},${b.priority||''},${b.start_date||null},${b.end_date||null}) RETURNING *`;
       return json(rows[0]);
     }
 
     const defMatch = path.match(/^definitions\/(\d+)$/);
     if (defMatch && request.method === 'PUT') {
       const b = await request.json();
-      const rows = await sql`UPDATE payment_definitions SET name=${b.name},category=${b.category},freq=${b.freq},weekday=${b.weekday||null},day_of_month=${b.day_of_month||null},next_date=${b.next_date||null},amount=${b.amount},credit_bal=${b.credit_bal??null},credit_max=${b.credit_max??null},priority=${b.priority||''},updated_at=NOW() WHERE id=${parseInt(defMatch[1])} RETURNING *`;
+      const rows = await sql`UPDATE payment_definitions SET name=${b.name},category=${b.category},freq=${b.freq},weekday=${b.weekday||null},day_of_month=${b.day_of_month||null},next_date=${b.next_date||null},amount=${b.amount},credit_bal=${b.credit_bal??null},credit_max=${b.credit_max??null},priority=${b.priority||''},start_date=${b.start_date||null},end_date=${b.end_date||null},updated_at=NOW() WHERE id=${parseInt(defMatch[1])} RETURNING *`;
       return json(rows[0]);
     }
 
