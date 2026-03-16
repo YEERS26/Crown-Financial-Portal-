@@ -34,7 +34,7 @@ let activeTab = 'dashboard';
 let calMonth  = { y: new Date().getFullYear(), m: new Date().getMonth() };
 
 const CATS  = ['Alcohol & Stock Purchases','Finance & Loans','Kitchen & Equipment','Licences & Compliance','Media & Entertainment','Property & Premises Costs','Staff & Labour','Tax & Government','Telecoms & IT','Utilities & Energy'];
-const FREQS = ['Weekly','Monthly','Yearly'];
+const FREQS = ['Weekly','Monthly','Yearly','One-off'];
 const DAYS  = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 // ── BOOT ─────────────────────────────────────────────────────────
@@ -242,6 +242,7 @@ const defById  = id=>defs.find(d=>d.id===id);
 function toMonthly(def) {
   if (def.freq==='Weekly')  return def.amount*52/12;
   if (def.freq==='Monthly') return def.amount;
+  if (def.freq==='One-off') return 0;
   return def.amount/12;
 }
 
@@ -273,14 +274,17 @@ function weeklyCountInMonth(weekday,y,m) {
   return count;
 }
 
-function freqBadge(f)   { if(f==='Weekly') return `<span class="badge bweekly">Weekly</span>`; if(f==='Monthly') return `<span class="badge bmonthly">Monthly</span>`; return `<span class="badge byearly">Yearly</span>`; }
+function freqBadge(f)   { if(f==='Weekly') return `<span class="badge bweekly">Weekly</span>`; if(f==='Monthly') return `<span class="badge bmonthly">Monthly</span>`; if(f==='Yearly') return `<span class="badge byearly">Yearly</span>`; if(f==='One-off') return `<span class="badge" style="background:#f0f9e8;color:#2d6a0a;border:1px solid rgba(45,106,10,.2)">One-off</span>`; return f; }
 function statusBadge(s) { if(s==='Paid') return `<span class="badge bpaid">Paid</span>`; if(s==='To be paid') return `<span class="badge btopay">To pay</span>`; return `<span class="badge bna">\u2014</span>`; }
 function priBadge(p)    { if(p==='Urgent') return `<span class="badge burgent">Urgent</span>`; if(p==='High') return `<span class="badge bhigh">High</span>`; if(p==='Low') return `<span class="badge blow">Low</span>`; return '\u2014'; }
 
+
 // ── DASHBOARD ────────────────────────────────────────────────────
+let _activeCatFilter = null;
+
 function renderDash() {
   const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
-  const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;});
+  const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;}).sort((a,b)=>a.date.localeCompare(b.date));
   const monthTotal=mi.reduce((s,i)=>s+i.amount,0);
   const monthPaid=mi.filter(i=>i.status==='Paid').reduce((s,i)=>s+i.amount,0);
   const monthToPay=mi.filter(i=>i.status!=='Paid').reduce((s,i)=>s+i.amount,0);
@@ -290,6 +294,19 @@ function renderDash() {
   const catMap={}; mi.forEach(i=>{const def=defById(i.defId);if(!def)return;catMap[def.cat]=(catMap[def.cat]||0)+i.amount;});
   const topCats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
   const alertHtml=urgentDefs.length?`<div class="alert"><span>&#9888;</span><span><strong>${urgentDefs.length} urgent/high priority:</strong> ${urgentDefs.map(d=>d.name).join(', ')}</span></div>`:'';
+  _activeCatFilter=null;
+
+  const breakdownRows=mi.map(i=>{
+    const def=defById(i.defId); if(!def) return '';
+    return `<tr>
+      <td style="font-size:12px;color:var(--inkl)">${formatDate(i.date)}</td>
+      <td style="font-weight:600">${def.name}</td>
+      <td><span class="cattag">${def.cat}</span></td>
+      <td>${freqBadge(def.freq)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(i.amount)}</td>
+      <td>${statusBadge(i.status)}</td>
+    </tr>`;
+  }).join('');
 
   return `
     <div class="mgrid">
@@ -315,8 +332,28 @@ function renderDash() {
         </tr></tfoot>
       </table></div></div>`:''}
     <div class="dgrid2">
-      <div class="card"><div class="chead"><span class="ctitle">Spend by category \u2014 this month</span></div><div class="chartbox"><canvas id="catChart"></canvas></div></div>
-      <div class="card"><div class="chead"><span class="ctitle">Paid vs still to pay</span></div><div class="chartbox"><canvas id="statusChart"></canvas></div></div>
+      <div class="card">
+        <div class="chead"><span class="ctitle">Spend by category \u2014 click a segment to filter</span></div>
+        <div class="chartbox" style="height:260px"><canvas id="catChart"></canvas></div>
+        <div id="catFilterBar" style="display:none;padding:8px 16px;border-top:1px solid var(--bdrlt);background:var(--parch);display:none;align-items:center;justify-content:space-between">
+          <span id="catFilterLabel" style="font-size:13px;font-weight:600"></span>
+          <button class="btnsm" onclick="clearCatFilter()" style="font-size:11px">\u2715 Clear filter</button>
+        </div>
+      </div>
+      <div class="card"><div class="chead"><span class="ctitle">Paid vs still to pay \u2014 click to filter</span></div><div class="chartbox" style="height:260px"><canvas id="statusChart"></canvas></div></div>
+    </div>
+    <div class="card section-gap">
+      <div class="chead">
+        <span class="ctitle" id="breakdownTitle">All payments \u2014 ${now.toLocaleString('en-GB',{month:'long',year:'numeric'})}</span>
+        <span style="font-size:12px;color:var(--inkl)" id="breakdownCount">${mi.length} payments \u00b7 ${fmt(monthTotal)}</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="breakdownTable">
+          <thead><tr><th>Date</th><th>Payment</th><th>Category</th><th>Frequency</th><th style="text-align:right">Amount</th><th>Status</th></tr></thead>
+          <tbody id="breakdownBody">${breakdownRows}</tbody>
+          <tfoot><tr class="totalrow"><td colspan="4">Total</td><td style="text-align:right" id="breakdownTotal">${fmt(monthTotal)}</td><td></td></tr></tfoot>
+        </table>
+      </div>
     </div>
     <div class="dgrid3">
       <div class="card"><div class="chead"><span class="ctitle">Payment calendar</span></div><div id="calContainer">${renderCalendar(calMonth.y,calMonth.m)}</div></div>
@@ -328,19 +365,91 @@ function renderDash() {
     </div>`;
 }
 
+function _renderBreakdown(filtered) {
+  const body=document.getElementById('breakdownBody');
+  const totalEl=document.getElementById('breakdownTotal');
+  const countEl=document.getElementById('breakdownCount');
+  if(!body) return;
+  const sum=filtered.reduce((s,i)=>s+i.amount,0);
+  body.innerHTML=filtered.map(i=>{
+    const def=defById(i.defId); if(!def) return '';
+    return `<tr>
+      <td style="font-size:12px;color:var(--inkl)">${formatDate(i.date)}</td>
+      <td style="font-weight:600">${def.name}</td>
+      <td><span class="cattag">${def.cat}</span></td>
+      <td>${freqBadge(def.freq)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(i.amount)}</td>
+      <td>${statusBadge(i.status)}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--inkl)">No payments.</td></tr>`;
+  if(totalEl) totalEl.textContent=fmt(sum);
+  if(countEl) countEl.textContent=`${filtered.length} payments \u00b7 ${fmt(sum)}`;
+}
+
+function clearCatFilter() {
+  _activeCatFilter=null;
+  const bar=document.getElementById('catFilterBar'); if(bar) bar.style.display='none';
+  const title=document.getElementById('breakdownTitle');
+  if(title) title.textContent='All payments \u2014 '+new Date().toLocaleString('en-GB',{month:'long',year:'numeric'});
+  const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
+  const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;}).sort((a,b)=>a.date.localeCompare(b.date));
+  _renderBreakdown(mi);
+}
+
 function initCharts() {
   const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
   const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;});
   const catMap={}; mi.forEach(i=>{const def=defById(i.defId);if(!def)return;catMap[def.cat]=(catMap[def.cat]||0)+i.amount;});
   const catLabels=Object.keys(catMap), catVals=catLabels.map(k=>catMap[k]);
   const palette=['#c8911c','#1a3c6e','#255c1f','#781818','#3d2fa0','#7a1f50','#196e4a','#7a4300','#3a3a3a','#6e3d1a'];
+
   const catCtx=document.getElementById('catChart');
-  if(catCtx) new Chart(catCtx,{type:'bar',data:{labels:catLabels,datasets:[{data:catVals,backgroundColor:palette.slice(0,catLabels.length),borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'\u00a3'+ctx.raw.toLocaleString('en-GB',{minimumFractionDigits:2})}}},scales:{x:{ticks:{font:{size:10},maxRotation:30},grid:{display:false}},y:{ticks:{callback:v=>'\u00a3'+v.toLocaleString('en-GB')},grid:{color:'rgba(200,145,28,.08)'}}}}});
+  if(catCtx) new Chart(catCtx,{
+    type:'doughnut',
+    data:{labels:catLabels,datasets:[{data:catVals,backgroundColor:palette.slice(0,catLabels.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'55%',
+      plugins:{legend:{position:'right',labels:{font:{size:11},padding:10,boxWidth:12}},
+        tooltip:{callbacks:{label:ctx=>ctx.label+': \u00a3'+ctx.raw.toLocaleString('en-GB',{minimumFractionDigits:2})}}},
+      onClick:(e,els)=>{
+        if(!els.length){clearCatFilter();return;}
+        const cat=catLabels[els[0].index];
+        _activeCatFilter=cat;
+        const bar=document.getElementById('catFilterBar'), lbl=document.getElementById('catFilterLabel');
+        const title=document.getElementById('breakdownTitle');
+        if(bar){bar.style.display='flex';}
+        if(lbl) lbl.textContent='Showing: '+cat;
+        if(title) title.textContent=cat+' \u2014 '+now.toLocaleString('en-GB',{month:'long',year:'numeric'});
+        const filtered=mi.filter(i=>{const def=defById(i.defId);return def&&def.cat===cat;}).sort((a,b)=>a.date.localeCompare(b.date));
+        _renderBreakdown(filtered);
+        const bt=document.getElementById('breakdownTable');
+        if(bt) bt.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
+      }
+    }
+  });
+
   const paid=mi.filter(i=>i.status==='Paid').reduce((s,i)=>s+i.amount,0);
   const topay=mi.filter(i=>i.status!=='Paid').reduce((s,i)=>s+i.amount,0);
   const stCtx=document.getElementById('statusChart');
-  if(stCtx) new Chart(stCtx,{type:'doughnut',data:{labels:['Paid','Still to pay'],datasets:[{data:[paid,topay],backgroundColor:['#255c1f','#c8911c'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{font:{size:11},padding:12}},tooltip:{callbacks:{label:ctx=>'\u00a3'+ctx.raw.toLocaleString('en-GB',{minimumFractionDigits:2})}}}}});
+  if(stCtx) new Chart(stCtx,{
+    type:'doughnut',
+    data:{labels:['Paid','Still to pay'],datasets:[{data:[paid,topay],backgroundColor:['#255c1f','#c8911c'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',
+      plugins:{legend:{position:'bottom',labels:{font:{size:11},padding:12}},
+        tooltip:{callbacks:{label:ctx=>'\u00a3'+ctx.raw.toLocaleString('en-GB',{minimumFractionDigits:2})}}},
+      onClick:(e,els)=>{
+        if(!els.length) return;
+        const isPaid=els[0].index===0;
+        const title=document.getElementById('breakdownTitle');
+        if(title) title.textContent=(isPaid?'Paid':'Still to pay')+' \u2014 '+now.toLocaleString('en-GB',{month:'long',year:'numeric'});
+        const filtered=mi.filter(i=>isPaid?i.status==='Paid':i.status!=='Paid').sort((a,b)=>a.date.localeCompare(b.date));
+        _renderBreakdown(filtered);
+        const bt=document.getElementById('breakdownTable');
+        if(bt) bt.closest('.card').scrollIntoView({behavior:'smooth',block:'start'});
+      }
+    }
+  });
 }
+
 
 // ── CALENDAR ─────────────────────────────────────────────────────
 function renderCalendar(y,m) {
@@ -471,6 +580,7 @@ function renderPricelist() {
 function renderDayCell(def) {
   if(def.freq==='Weekly') return `<select class="esel" data-id="${def.id}" data-f="weekday" onchange="plChange(this)">${DAYS.map(d=>`<option value="${d}" ${def.weekday===d?'selected':''}>${d}</option>`).join('')}</select>`;
   if(def.freq==='Monthly') return `<input class="enum" type="number" min="1" max="31" step="1" value="${def.dayOfMonth||1}" data-id="${def.id}" data-f="dayOfMonth" onchange="plChange(this)" style="width:60px"/>`;
+  if(def.freq==='One-off') return `<input class="enum" type="date" value="${def.nextDate||''}" data-id="${def.id}" data-f="nextDate" onchange="plChange(this)" style="width:130px"/>`;
   return `<input class="enum" type="text" value="${def.nextDate||''}" placeholder="YYYY-MM-DD" data-id="${def.id}" data-f="nextDate" onchange="plChange(this)" style="width:110px"/>`;
 }
 
@@ -513,7 +623,7 @@ function openAddPayment() {
     </div>
     <div class="mgrid2">
       <div class="mfld"><label>Frequency</label><select id="mFreq" onchange="modalFreqChange()">${FREQS.map(f=>`<option>${f}</option>`).join('')}</select></div>
-      <div class="mfld"><label id="mDayLbl">Pay day</label><select id="mDay">${DAYS.map(d=>`<option>${d}</option>`).join('')}</select></div>
+      <div class="mfld"><label id="mDayLbl">Pay day</label><div id="mDayWrap"><select id="mDay">${DAYS.map(d=>`<option>${d}</option>`).join('')}</select></div></div>
     </div>
     <div class="mgrid2">
       <div class="mfld"><label>Amount (\u00a3)</label><input id="mAmt" type="number" step="0.01" min="0" placeholder="0.00"/></div>
@@ -525,18 +635,51 @@ function openAddPayment() {
 }
 
 function modalFreqChange() {
-  const f=document.getElementById('mFreq').value, lbl=document.getElementById('mDayLbl'), day=document.getElementById('mDay');
-  if(f==='Weekly'){lbl.textContent='Pay day';day.innerHTML=DAYS.map(d=>`<option>${d}</option>`).join('');}
-  else if(f==='Monthly'){lbl.textContent='Day of month';day.innerHTML=Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');}
-  else{lbl.textContent='Next date (YYYY-MM-DD)';day.innerHTML='<option value="">Optional</option>';}
+  const f=document.getElementById('mFreq').value, lbl=document.getElementById('mDayLbl');
+  const wrap=document.getElementById('mDayWrap');
+  if(f==='Weekly'){
+    lbl.textContent='Pay day';
+    wrap.innerHTML=`<select id="mDay">${DAYS.map(d=>`<option>${d}</option>`).join('')}</select>`;
+  } else if(f==='Monthly'){
+    lbl.textContent='Day of month';
+    wrap.innerHTML=`<select id="mDay">${Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}</select>`;
+  } else if(f==='One-off'){
+    lbl.textContent='Payment date';
+    wrap.innerHTML=`<input id="mDay" type="date" style="width:100%;padding:8px 10px;border:1px solid #d8ccb0;border-radius:4px;font-size:13px;color:var(--ink)"/>`;
+  } else {
+    lbl.textContent='Next date (YYYY-MM-DD)';
+    wrap.innerHTML=`<select id="mDay"><option value="">Optional</option></select>`;
+  }
 }
 
 async function addPayment() {
   const name=document.getElementById('mName').value.trim(); if(!name){alert('Please enter a payment name.');return;}
-  const freq=document.getElementById('mFreq').value, dayVal=document.getElementById('mDay').value, credit=document.getElementById('mCredit').value;
-  const defData={name,cat:document.getElementById('mCat').value,freq,priority:document.getElementById('mPri').value,amount:parseFloat(document.getElementById('mAmt').value)||0,creditBal:credit?parseFloat(credit):null,creditMax:credit?parseFloat(credit)*2:null,weekday:freq==='Weekly'?dayVal:null,dayOfMonth:freq==='Monthly'?parseInt(dayVal)||1:null,nextDate:freq==='Yearly'?dayVal||null:null};
+  const freq=document.getElementById('mFreq').value;
+  const dayEl=document.getElementById('mDay');
+  const dayVal=dayEl?dayEl.value:'';
+  const credit=document.getElementById('mCredit').value;
+  const defData={
+    name, cat:document.getElementById('mCat').value, freq,
+    priority:document.getElementById('mPri').value,
+    amount:parseFloat(document.getElementById('mAmt').value)||0,
+    creditBal:credit?parseFloat(credit):null,
+    creditMax:credit?parseFloat(credit)*2:null,
+    weekday:freq==='Weekly'?dayVal:null,
+    dayOfMonth:freq==='Monthly'?parseInt(dayVal)||1:null,
+    nextDate:(freq==='Yearly'||freq==='One-off')?dayVal||null:null
+  };
   const newDef=await insertDef(defData);
-  if(newDef){defs.push(newDef); await generateUpcomingInstances();}
+  if(newDef){
+    if(!defs.find(d=>d.id===newDef.id)) defs.push(newDef);
+    if(freq==='One-off'&&dayVal){
+      // Create single instance for one-off payment
+      const inst={id:-1,defId:newDef.id,date:dayVal,amount:defData.amount,status:''};
+      await saveInst(inst);
+      insts.push(inst);
+    } else {
+      await generateUpcomingInstances();
+    }
+  }
   hideModal(); render(activeTab);
 }
 
@@ -569,7 +712,8 @@ function editFreqChange(id) {
   const f=document.getElementById('eFreq').value, lbl=document.getElementById('eDayLbl'), sel=document.getElementById('eDay'), inp=document.getElementById('eDateInp');
   if(f==='Weekly'){lbl.textContent='Pay day';sel.innerHTML=DAYS.map(d=>`<option>${d}</option>`).join('');sel.style.display='';inp.style.display='none';}
   else if(f==='Monthly'){lbl.textContent='Day of month';sel.innerHTML=Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');sel.style.display='';inp.style.display='none';}
-  else{lbl.textContent='Next date';sel.style.display='none';inp.style.display='';}
+  else if(f==='One-off'){lbl.textContent='Payment date';sel.style.display='none';inp.type='date';inp.placeholder='';inp.style.display='';}
+  else{lbl.textContent='Next date';sel.style.display='none';inp.type='text';inp.placeholder='YYYY-MM-DD';inp.style.display='';}
 }
 
 async function saveEdit(id) {
