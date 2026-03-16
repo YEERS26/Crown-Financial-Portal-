@@ -131,6 +131,8 @@ function mapDef(r) {
     creditBal: r.credit_bal !== null ? Number(r.credit_bal) : null,
     creditMax: r.credit_max !== null ? Number(r.credit_max) : null,
     priority: r.priority || '',
+    startDate: r.start_date || null,
+    endDate:   r.end_date   || null,
   };
 }
 
@@ -145,6 +147,8 @@ function defToRow(def) {
     next_date: def.nextDate || null, amount: def.amount,
     credit_bal: def.creditBal ?? null, credit_max: def.creditMax ?? null,
     priority: def.priority || '',
+    start_date: def.startDate || null,
+    end_date:   def.endDate   || null,
   };
 }
 
@@ -203,10 +207,19 @@ async function generateUpcomingInstances() {
   const newRows = [];
 
   defs.forEach(def => {
+    // Skip if past end date
+    if (def.endDate && toDateStr(now) > def.endDate) return;
+    // Respect start date
+    const start = def.startDate ? new Date(def.startDate.replace(/-/g,'/')) : now;
+    const effectiveStart = start > now ? start : now;
+    // Cap horizon at end date if set
+    const end = def.endDate ? new Date(def.endDate.replace(/-/g,'/')) : horizon;
+    const effectiveEnd = end < horizon ? end : horizon;
+
     if (def.freq==='Weekly' && def.weekday) {
       const wdMap = {Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
       const target = wdMap[def.weekday];
-      for (let d=new Date(now); d<=horizon; d.setDate(d.getDate()+1)) {
+      for (let d=new Date(effectiveStart); d<=effectiveEnd; d.setDate(d.getDate()+1)) {
         if (d.getDay()===target) {
           const ds = toDateStr(d);
           if (!insts.find(i=>i.defId===def.id&&i.date===ds)) {
@@ -220,6 +233,7 @@ async function generateUpcomingInstances() {
       for (let offset=0; offset<=3; offset++) {
         const d  = new Date(now.getFullYear(), now.getMonth()+offset, def.dayOfMonth);
         const ds = toDateStr(d);
+        if (ds < toDateStr(effectiveStart) || ds > toDateStr(effectiveEnd)) continue;
         if (!insts.find(i=>i.defId===def.id&&i.date===ds)) {
           insts.push({id:-1, defId:def.id, date:ds, amount:def.amount, status:''});
           newRows.push({def_id:def.id, date:ds, amount:def.amount, status:''});
@@ -396,17 +410,41 @@ function applyCustomRange() {
 
 function renderDash() {
   const now=new Date(); const y=now.getFullYear(),m=now.getMonth();
+  const today=toDateStr(now);
   const mi=insts.filter(i=>{const d=new Date(i.date.replace(/-/g,'/')); return d.getFullYear()===y&&d.getMonth()===m;}).sort((a,b)=>a.date.localeCompare(b.date));
   const monthTotal=mi.reduce((s,i)=>s+i.amount,0);
   const monthPaid=mi.filter(i=>i.status==='Paid').reduce((s,i)=>s+i.amount,0);
   const monthToPay=mi.filter(i=>i.status!=='Paid').reduce((s,i)=>s+i.amount,0);
   const totalCredit=defs.reduce((s,d)=>s+(d.creditBal||0),0);
   const urgentDefs=defs.filter(d=>d.priority==='Urgent'||d.priority==='High');
-  const weeklyDefs=defs.filter(d=>d.freq==='Weekly');
+  const weeklyDefs=defs.filter(d=>d.freq==='Weekly'&&(!d.endDate||d.endDate>=today));
   const catMap={}; mi.forEach(i=>{const def=defById(i.defId);if(!def)return;catMap[def.cat]=(catMap[def.cat]||0)+i.amount;});
   const topCats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
   const alertHtml=urgentDefs.length?`<div class="alert"><span>&#9888;</span><span><strong>${urgentDefs.length} urgent/high priority:</strong> ${urgentDefs.map(d=>d.name).join(', ')}</span></div>`:'';
   _activeCatFilter=null;
+
+  // Completed payments — end date has passed
+  const completedDefs=defs.filter(d=>d.endDate && d.endDate < today);
+
+  const completedHtml=completedDefs.length?`
+    <div class="card section-gap" style="border:1px solid rgba(37,92,31,.3)">
+      <div class="chead" style="background:#eaf3e7">
+        <span class="ctitle" style="color:var(--g)">&#10003; Completed payments (${completedDefs.length})</span>
+        <span style="font-size:12px;color:var(--g)">End date has passed</span>
+      </div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Payment</th><th>Category</th><th>Frequency</th><th>Start date</th><th>End date</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>${completedDefs.map(def=>`<tr>
+          <td style="font-weight:600">${def.name}</td>
+          <td><span class="cattag">${def.cat}</span></td>
+          <td>${freqBadge(def.freq)}</td>
+          <td style="font-size:12px;color:var(--inkl)">${def.startDate?formatDate(def.startDate):'\u2014'}</td>
+          <td style="font-size:12px;color:var(--g);font-weight:600">${formatDate(def.endDate)}</td>
+          <td style="text-align:right">${fmt(def.amount)}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`:'';
 
   const breakdownRows=mi.map(i=>{
     const def=defById(i.defId); if(!def) return '';
@@ -428,6 +466,7 @@ function renderDash() {
       <div class="mcard"><div class="mlbl">Total credit owed</div><div class="mval danger">${fmt(totalCredit)}</div><div class="msub">${defs.filter(d=>d.creditBal>0).length} accounts</div></div>
     </div>
     ${alertHtml}
+    ${completedHtml}
     ${weeklyDefs.length?`<div class="card section-gap">
       <div class="chead"><span class="ctitle">Weekly payments \u2014 ${now.toLocaleString('en-GB',{month:'long',year:'numeric'})}</span></div>
       <div style="padding:14px;overflow-x:auto"><table style="min-width:500px">
@@ -681,16 +720,20 @@ function renderPricelist() {
     <button class="btnprimary" onclick="openAddPayment()">+ Add payment</button>
   </div>
   <div class="twrap"><table>
-    <thead><tr><th>Payment</th><th>Category</th><th>Frequency</th><th>Pay day / Date</th><th style="text-align:right">Amount (\u00a3)</th><th>Status</th><th>Priority</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Payment</th><th>Category</th><th>Frequency</th><th>Pay day</th><th style="text-align:right">Amount (\u00a3)</th><th>Start date</th><th>End date</th><th>Status</th><th>Priority</th><th>Actions</th></tr></thead>
     <tbody id="plBody">${defs.map(def=>{
       const li=insts.filter(i=>i.defId===def.id).sort((a,b)=>b.date.localeCompare(a.date))[0];
       const cs=li?li.status:'';
-      return `<tr data-id="${def.id}">
-        <td style="font-weight:600">${def.name}</td>
+      const today=toDateStr(new Date());
+      const isCompleted=def.endDate&&def.endDate<today;
+      return `<tr data-id="${def.id}" style="${isCompleted?'background:#eaf3e7;':''}">
+        <td style="font-weight:600">${def.name}${isCompleted?` <span style="font-size:10px;color:var(--g);font-weight:600">\u2713 Done</span>`:''}</td>
         <td><select class="esel" data-id="${def.id}" data-f="cat" onchange="plChange(this)">${CATS.map(c=>`<option value="${c}" ${def.cat===c?'selected':''}>${c}</option>`).join('')}</select></td>
         <td><select class="esel" data-id="${def.id}" data-f="freq" onchange="plFreqChange(this)">${FREQS.map(f=>`<option value="${f}" ${def.freq===f?'selected':''}>${f}</option>`).join('')}</select></td>
         <td id="dayCell_${def.id}">${renderDayCell(def)}</td>
         <td style="text-align:right"><input class="enum" type="number" step="0.01" min="0" value="${def.amount}" data-id="${def.id}" data-f="amount" onchange="plChange(this)"/></td>
+        <td><input class="enum" type="date" value="${def.startDate||''}" data-id="${def.id}" data-f="startDate" onchange="plChange(this)" style="width:120px"/></td>
+        <td><input class="enum" type="date" value="${def.endDate||''}" data-id="${def.id}" data-f="endDate" onchange="plChange(this)" style="width:120px"/></td>
         <td><select class="esel" data-id="${def.id}" data-f="status" onchange="plStatusChange(this)">
           <option value="" ${cs===''?'selected':''}>&#8212;</option>
           <option value="Paid" ${cs==='Paid'?'selected':''}>Paid</option>
@@ -724,6 +767,8 @@ async function plChange(el) {
   else if(f==='weekday') def.weekday=el.value;
   else if(f==='dayOfMonth') def.dayOfMonth=parseInt(el.value)||1;
   else if(f==='nextDate') def.nextDate=el.value;
+  else if(f==='startDate') def.startDate=el.value||null;
+  else if(f==='endDate') def.endDate=el.value||null;
   if(f==='amount'&&def.amount!==oldAmt) await cascadeAmount(def.id,def.amount);
   await saveDef(def);
 }
@@ -759,6 +804,10 @@ function openAddPayment() {
     <div class="mgrid2">
       <div class="mfld"><label>Amount (\u00a3)</label><input id="mAmt" type="number" step="0.01" min="0" placeholder="0.00"/></div>
       <div class="mfld"><label>Priority</label><select id="mPri"><option value="">&#8212;</option><option>Low</option><option>High</option><option>Urgent</option></select></div>
+    </div>
+    <div class="mgrid2">
+      <div class="mfld"><label>Start date <span style="font-weight:300;font-size:10px">(optional)</span></label><input id="mStartDate" type="date"/></div>
+      <div class="mfld"><label>End date <span style="font-weight:300;font-size:10px">(optional — when payments stop)</span></label><input id="mEndDate" type="date"/></div>
     </div>
     <div class="mfld"><label>Credit balance (\u00a3) \u2014 leave blank if not applicable</label><input id="mCredit" type="number" step="0.01" min="0" placeholder="Optional"/></div>`,
     `<button class="btnsm" onclick="hideModal()">Cancel</button><button class="btnprimary" onclick="addPayment()">Add payment</button>`
@@ -797,13 +846,14 @@ async function addPayment() {
     creditMax:credit?parseFloat(credit)*2:null,
     weekday:freq==='Weekly'?dayVal:null,
     dayOfMonth:freq==='Monthly'?parseInt(dayVal)||1:null,
-    nextDate:(freq==='Yearly'||freq==='One-off')?dayVal||null:null
+    nextDate:(freq==='Yearly'||freq==='One-off')?dayVal||null:null,
+    startDate:document.getElementById('mStartDate').value||null,
+    endDate:document.getElementById('mEndDate').value||null,
   };
   const newDef=await insertDef(defData);
   if(newDef){
     if(!defs.find(d=>d.id===newDef.id)) defs.push(newDef);
     if(freq==='One-off'&&dayVal){
-      // Create single instance for one-off payment
       const inst={id:-1,defId:newDef.id,date:dayVal,amount:defData.amount,status:''};
       await saveInst(inst);
       insts.push(inst);
@@ -832,6 +882,10 @@ function editDef(id) {
       <div class="mfld"><label>Amount (\u00a3)</label><input id="eAmt" type="number" step="0.01" value="${def.amount}"/></div>
       <div class="mfld"><label>Priority</label><select id="ePri"><option value="" ${def.priority===''?'selected':''}>&#8212;</option><option ${def.priority==='Low'?'selected':''}>Low</option><option ${def.priority==='High'?'selected':''}>High</option><option ${def.priority==='Urgent'?'selected':''}>Urgent</option></select></div>
     </div>
+    <div class="mgrid2">
+      <div class="mfld"><label>Start date <span style="font-weight:300;font-size:10px">(optional)</span></label><input id="eStartDate" type="date" value="${def.startDate||''}"/></div>
+      <div class="mfld"><label>End date <span style="font-weight:300;font-size:10px">(when payments stop)</span></label><input id="eEndDate" type="date" value="${def.endDate||''}"/></div>
+    </div>
     <div class="mfld"><label>Credit balance (\u00a3)</label><input id="eCredit" type="number" step="0.01" min="0" value="${def.creditBal!==null?def.creditBal:''}"/></div>`,
     `<button class="btnsm btndanger" onclick="confirmDelete(${id});hideModal()">Delete</button>
      <button class="btnsm" onclick="hideModal()">Cancel</button>
@@ -856,6 +910,8 @@ async function saveEdit(id) {
   def.amount=parseFloat(document.getElementById('eAmt').value)||0;
   def.priority=document.getElementById('ePri').value;
   const cr=document.getElementById('eCredit').value; def.creditBal=cr!==''?parseFloat(cr):null;
+  def.startDate=document.getElementById('eStartDate').value||null;
+  def.endDate=document.getElementById('eEndDate').value||null;
   if(def.freq==='Weekly') def.weekday=document.getElementById('eDay').value;
   else if(def.freq==='Monthly') def.dayOfMonth=parseInt(document.getElementById('eDay').value)||1;
   else def.nextDate=document.getElementById('eDateInp').value||null;
