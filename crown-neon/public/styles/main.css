@@ -157,6 +157,7 @@ tbody tr:hover td{background:rgba(200,145,28,.03)}
 .crbar{flex:1;height:5px;background:#f0ece2;border-radius:3px;overflow:hidden;min-width:40px}
 .crfill{height:100%;border-radius:3px;background:var(--r)}
 .wkbadge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:11px;background:#e8f4fe;color:#193c6e;margin:1px}
+.df-btn.active{background:var(--brass);color:var(--mah);border-color:var(--brass);font-weight:600}
 .hint{font-size:12px;color:var(--inkl);margin-bottom:12px}
 .section-gap{margin-bottom:16px}
 .loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:200px;gap:12px;color:var(--inkl);font-size:13px}
