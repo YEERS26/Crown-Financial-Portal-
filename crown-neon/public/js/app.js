@@ -94,7 +94,33 @@ async function loadAll() {
   defs  = rawDefs.map(mapDef);
   insts = rawInsts.map(mapInst);
   await generateUpcomingInstances();
+  await autoSetStatuses();
   setSyncStatus('ok');
+}
+
+// Auto-set statuses based on date every time portal loads:
+// past = Paid, today/future = To be paid
+// Saves any changes back to DB
+async function autoSetStatuses() {
+  const today = getToday();
+  const toUpdate = [];
+
+  insts.forEach(i => {
+    const shouldBe = i.date < today ? 'Paid' : 'To be paid';
+    if (i.status !== shouldBe) {
+      i.status = shouldBe;
+      if (i.id && i.id > 0) toUpdate.push(i);
+    }
+  });
+
+  // Save changed statuses to DB in parallel
+  if (toUpdate.length) {
+    try {
+      await Promise.all(toUpdate.map(i =>
+        PUT(`instances/${i.id}`, { status: i.status, amount: i.amount })
+      ));
+    } catch(e) { console.error('autoSetStatuses error:', e); }
+  }
 }
 
 function mapDef(r) {
